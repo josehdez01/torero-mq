@@ -1,7 +1,7 @@
 {
   "name": "torero-mq",
   "version": "0.0.0",
-  "description": "Typed queue orchestration library (BullMQ + Zod).",
+  "description": "Type-safe BullMQ queues you can tame.",
   "type": "module",
   "private": false,
   "packageManager": "pnpm@10.20.0",
@@ -38,9 +38,9 @@
     "zod"
   ],
   "peerDependencies": {
-    "bullmq": "^5.63.0",
-    "ioredis": "^5.8.2",
-    "zod": "^4.1.12"
+    "bullmq": "5.63.0",
+    "ioredis": "5.8.2",
+    "zod": "4.1.12"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.0.6",
