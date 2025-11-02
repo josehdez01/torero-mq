@@ -1,0 +1,53 @@
+{
+  "name": "torero-mq",
+  "version": "0.0.0",
+  "description": "Typed queue orchestration library (BullMQ + Zod).",
+  "type": "module",
+  "private": false,
+  "packageManager": "pnpm@10.20.0",
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -w -p tsconfig.build.json",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "oxlint",
+    "format": "prettier -w .",
+    "format:check": "prettier -c ."
+  },
+  "keywords": [
+    "bullmq",
+    "queue",
+    "redis",
+    "jobs",
+    "typescript",
+    "zod"
+  ],
+  "peerDependencies": {
+    "bullmq": "^5.63.0",
+    "ioredis": "^5.8.2",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "4.0.6",
+    "oxlint": "1.25.0",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3",
+    "vitest": "4.0.6"
+  },
+  "license": "MIT"
+}
