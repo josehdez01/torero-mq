@@ -12,6 +12,7 @@ import type {
 import { toBullOptions, deriveJobId } from './helpers.js';
 import { createBullmqRuntime, type BullmqRuntime, spawnWorker } from './runtime/bullmq-runtime.js';
 import type { JobsOptions } from 'bullmq';
+import { randomUUID } from 'node:crypto';
 import type { Logger, ToreroQueues, QueueInput, QueueOutput } from './core/types.js';
 import type { z } from 'zod';
 
@@ -367,13 +368,13 @@ function enqueueAt<TInput, TOutput>(
     return enqueueIn(service, name, { delayMs: delay }, input, options);
 }
 
-function enqueueRepeat<TInput, TOutput>(
+async function enqueueRepeat<TInput, TOutput>(
     service: QueueService,
     name: string,
     spec: RepeatSpec,
     input: TInput,
     options?: ScheduleOptions<TInput>,
-): RepeatStream<TOutput> {
+): Promise<RepeatStream<TOutput>> {
     const runtime = getRuntimeOrThrow<TInput, TOutput>(service, name);
     const definition = getDefinitionOrThrow(service, name);
     const { logger } = service;
@@ -388,18 +389,41 @@ function enqueueRepeat<TInput, TOutput>(
         throw new Error(`Invalid input for queue '${name}': ${issues}`);
     }
 
-    const repeat =
-        spec.type === 'cron' ? { cron: spec.cron } : { every: spec.everyMs!, immediately: true };
+    // Map RepeatSpec to Job Scheduler repeat options, including optional controls
+    const schedulerOpts: {
+        every?: number;
+        pattern?: string;
+        startDate?: Date;
+        endDate?: Date;
+        limit?: number;
+    } = spec.type === 'cron' ? { pattern: spec.cron } : { every: spec.everyMs! };
+    if (spec.startDate) schedulerOpts.startDate = spec.startDate;
+    if (spec.endDate) schedulerOpts.endDate = spec.endDate;
+    if (spec.limit !== undefined) schedulerOpts.limit = spec.limit;
+
+    // Template applied to jobs produced by the Job Scheduler
     const data = { payload: parsed.data as TInput };
     const defaults = definition.defaults;
-    const baseOptions = {
-        ...toBullOptions(defaults, options),
-        repeat: repeat,
-    } satisfies JobsOptions;
-    const jobPromise = runtime.queue.add('job', data, baseOptions);
-    void jobPromise.catch((err) =>
-        logger.warn({ err, queue: name }, 'failed to schedule repeatable job'),
-    );
+    const template = {
+        name: 'job',
+        data,
+        opts: toBullOptions(defaults, options),
+    } as const;
+
+    // Determine a scheduler id. If the caller provides an idempotencyKey we derive a
+    // stable id from it; otherwise we generate a random id per stream instance.
+    const schedulerId = (() => {
+        const key = options?.idempotencyKey
+            ? typeof options.idempotencyKey === 'function'
+                ? options.idempotencyKey(parsed.data as TInput)
+                : options.idempotencyKey
+            : undefined;
+        if (key) return deriveJobId(service.prefix, name, `scheduler:${key}`);
+        return randomUUID();
+    })();
+
+    // Create or update the scheduler and propagate any errors to the caller.
+    await runtime.queue.upsertJobScheduler(schedulerId, schedulerOpts, template);
 
     let closed = false;
     const listeners: Array<(evt: { jobId: string }) => void> = [];
@@ -449,9 +473,9 @@ function enqueueRepeat<TInput, TOutput>(
         },
         cancel: async () => {
             try {
-                await runtime.queue.removeRepeatable('job', repeat);
+                await runtime.queue.removeJobScheduler(schedulerId);
             } catch (err) {
-                logger.warn({ err, queue: name }, 'failed to remove repeatable');
+                logger.warn({ err, queue: name }, 'failed to remove job scheduler');
             } finally {
                 stream.close();
             }

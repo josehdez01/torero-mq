@@ -39,7 +39,21 @@ export type AwaitResult<T> = {
  * Repeat interval specification. Discriminated union with either a fixed interval
  * or a cron expression.
  */
-export type RepeatSpec = { type: 'interval'; everyMs: number } | { type: 'cron'; cron: string };
+export type RepeatSpec =
+    | {
+          type: 'interval';
+          everyMs: number;
+          startDate?: Date;
+          endDate?: Date;
+          limit?: number;
+      }
+    | {
+          type: 'cron';
+          cron: string;
+          startDate?: Date;
+          endDate?: Date;
+          limit?: number;
+      };
 
 /** Yielded values from a repeat stream: per-job result with its id. */
 export type RepeatYield<T> = { jobId: string; result: T };
@@ -106,7 +120,7 @@ export interface ConcreteQueue<TInput, TOutput> {
         spec: RepeatSpec,
         input: TInput,
         options?: ScheduleOptions<TInput>,
-    ): RepeatStream<TOutput>;
+    ): Promise<RepeatStream<TOutput>>;
 }
 
 /** Infer the input type from a Zod schema. */

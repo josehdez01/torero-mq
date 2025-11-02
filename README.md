@@ -90,7 +90,7 @@ export async function POST(req) {
 - `publish(input, options?) → Promise<AwaitResult<T>>`
 - `scheduleAt({ when }, input, options?) → Promise<AwaitResult<T>>`
 - `scheduleIn({ delayMs }, input, options?) → Promise<AwaitResult<T>>`
-- `scheduleRepeat(spec, input, options?) → RepeatStream<T>`
+- `scheduleRepeat(spec, input, options?) → Promise<RepeatStream<T>>`
 
 The `AwaitResult<T>` you get back from `publish/schedule*` is:
 
@@ -101,7 +101,7 @@ The `AwaitResult<T>` you get back from `publish/schedule*` is:
 Repeat jobs stream each run’s result and can be canceled:
 
 ```
-const stream = sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
+const stream = await sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
 for await (const { jobId, result } of stream) {
   console.log('repeat', jobId, result);
   if (shouldStop()) await stream.cancel();
@@ -147,7 +147,7 @@ await sumQueue.scheduleIn({ delayMs: 30_000 }, { a: 3, b: 9 });
 Repeat with results as a stream:
 
 ```
-const stream = sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
+const stream = await sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
 
 (async () => {
   for await (const { jobId, result } of stream) {
@@ -177,7 +177,7 @@ await sumQueue.publish(
 ## Common Usage Patterns
 
 - HTTP endpoints: enqueue and await the result in the same request for quick tasks; or return `jobId` and poll elsewhere for longer work.
-- Cron-style workers: `scheduleRepeat({ type: 'cron', cron: '*/5 * * * *' }, payload)` and iterate the stream to act on each run.
+- Cron-style workers: `await scheduleRepeat({ type: 'cron', cron: '*/5 * * * *' }, payload)` and iterate the stream to act on each run.
 - Fire-and-forget: call `sumQueue.publish(payload)` and ignore the returned handle if you don’t need results.
 - Strong types: both `input` and `result` are inferred from your Zod schemas.
 
@@ -204,15 +204,27 @@ await sumQueue.publish(
     - `publish(input, options?) → Promise<AwaitResult<TOutput>>`
     - `scheduleAt({ when }, input, options?) → Promise<AwaitResult<TOutput>>`
     - `scheduleIn({ delayMs }, input, options?) → Promise<AwaitResult<TOutput>>`
-    - `scheduleRepeat(spec, input, options?) → RepeatStream<TOutput>`
+    - `scheduleRepeat(spec, input, options?) → Promise<RepeatStream<TOutput>>`
 
 Key types:
 
 - `PublishOptions<T>` → attempts, backoff, timeoutMs, priority, idempotencyKey, removeOnComplete/Fail, jobId
 - `QueueDefaults` → per‑queue defaults for the above (plus concurrency and optional limiter)
-- `RepeatSpec` → `{ type: 'interval'; everyMs: number } | { type: 'cron'; cron: string }`
+- `RepeatSpec` →
+  - Interval: `{ type: 'interval'; everyMs: number; startDate?: Date; endDate?: Date; limit?: number }`
+  - Cron: `{ type: 'cron'; cron: string; startDate?: Date; endDate?: Date; limit?: number }`
 - `RepeatStream<T>` → async iterable of `{ jobId, result }`; call `cancel()` to unschedule; `close()` to stop listening.
 - `AwaitResult<T>` → `{ jobId, awaitResult, cancel }`
+
+## Repeat Scheduling (Job Scheduler)
+
+- Under the hood, repeat jobs use BullMQ’s Job Scheduler API: `upsertJobScheduler` and `removeJobScheduler`.
+- `scheduleRepeat(...)` returns a Promise and will reject if the scheduler upsert fails.
+- The first repetition for a newly inserted scheduler runs immediately; subsequent runs follow the schedule.
+- `cancel()` removes the job scheduler (stopping future runs) and closes the stream; `close()` only stops listening.
+- You can provide an `idempotencyKey` in options to derive a stable scheduler ID; otherwise a random ID is used.
+- Scheduler‑produced jobs get special IDs; custom `jobId` is not applied to these jobs (BullMQ constraint).
+- Supported repeat controls: `startDate`, `endDate`, `limit` on both interval and cron specs.
 - `Logger` → `{ info, warn, error }`
 
 ## QueueService Options

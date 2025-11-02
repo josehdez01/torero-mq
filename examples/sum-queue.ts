@@ -6,7 +6,7 @@ import { QueueService } from '../src/index.js';
 //   - sumQueue.publish(input)
 //   - sumQueue.scheduleAt({ when }, input)
 //   - sumQueue.scheduleIn({ delayMs }, input)
-//   - sumQueue.scheduleRepeat(spec, input)
+//   - await sumQueue.scheduleRepeat(spec, input)
 // Note: ensure the QueueService that registered this queue is initialized once
 // in your app (e.g. at startup) via `queueService.initQueues({ connection })`.
 // You can either export `queueService` from here or centralize it in a `queues/` index.
@@ -54,7 +54,10 @@ export const sumQueue = queueService.defineQueue({
  * await sumQueue.scheduleIn({ delayMs: 30_000 }, { a: 3, b: 3 });
  *
  * // 5) Repeat and iterate results
- * const stream = sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
+ * const stream = await sumQueue.scheduleRepeat(
+ *   { type: 'interval', everyMs: 5_000, limit: 10 },
+ *   { a: 2, b: 2 }
+ * );
  * for await (const { jobId, result } of stream) {
  *   console.log('repeat', jobId, result);
  *   if (shouldStop()) await stream.cancel();
