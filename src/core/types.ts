@@ -90,12 +90,12 @@ export interface ConcreteQueue<TInput, TOutput> {
     name: string;
     publish(input: TInput, options?: PublishOptions<TInput>): Promise<AwaitResult<TOutput>>;
     scheduleAt(
-        when: Date,
+        params: { when: Date },
         input: TInput,
         options?: ScheduleOptions<TInput>,
     ): Promise<AwaitResult<TOutput>>;
     scheduleIn(
-        delayMs: number,
+        params: { delayMs: number },
         input: TInput,
         options?: ScheduleOptions<TInput>,
     ): Promise<AwaitResult<TOutput>>;

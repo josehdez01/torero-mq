@@ -112,10 +112,10 @@ export class QueueService {
         const handle: ConcreteQueue<TInput, TOutput> = {
             name: definition.name,
             publish: async (input, options) => this.publish(definition.name, input, options),
-            scheduleAt: async (when, input, options) =>
-                this.scheduleAt(definition.name, when, input, options),
-            scheduleIn: async (delayMs, input, options) =>
-                this.scheduleIn(definition.name, delayMs, input, options),
+            scheduleAt: async (params, input, options) =>
+                this.scheduleAt(definition.name, params, input, options),
+            scheduleIn: async (params, input, options) =>
+                this.scheduleIn(definition.name, params, input, options),
             scheduleRepeat: (spec, input, options) =>
                 this.scheduleRepeat(definition.name, spec, input, options),
         };
@@ -186,7 +186,7 @@ export class QueueService {
             const definition = this.registry.get(name) as RegistryValue | undefined;
             if (!definition) continue;
             try {
-                await spawnWorker(definition as any, runtime as any, {
+                await spawnWorker(definition, runtime, {
                     connection: this.connection,
                     prefix: this.prefix,
                     exclusiveWorkers: this.exclusiveWorkers,
@@ -263,18 +263,18 @@ export class QueueService {
     /** Schedule a job to run at a specific time. */
     async scheduleAt<TInput, TOutput>(
         name: string,
-        when: Date,
+        params: { when: Date },
         input: TInput,
         options?: ScheduleOptions<TInput>,
     ): Promise<AwaitResult<TOutput>> {
-        const delay = Math.max(0, when.getTime() - Date.now());
-        return this.scheduleIn(name, delay, input, options);
+        const delay = Math.max(0, params.when.getTime() - Date.now());
+        return this.scheduleIn(name, { delayMs: delay }, input, options);
     }
 
     /** Schedule a job to run after a delay in milliseconds. */
     async scheduleIn<TInput, TOutput>(
         name: string,
-        delayMs: number,
+        params: { delayMs: number },
         input: TInput,
         options?: ScheduleOptions<TInput>,
     ): Promise<AwaitResult<TOutput>> {
@@ -294,7 +294,7 @@ export class QueueService {
         const data = { payload: parsed.data as TInput };
         const baseOptions: JobsOptions = {
             ...toBullOptions(definition.defaults, options),
-            delay: delayMs,
+            delay: params.delayMs,
         };
         const jobOptions = jobId ? { ...baseOptions, jobId } : baseOptions;
         const job = await runtime.queue.add(

@@ -78,13 +78,13 @@ await queues.initQueues({
 Run later at an absolute time:
 
 ```
-await sumQueue.scheduleAt(new Date(Date.now() + 15_000), { a: 1, b: 4 });
+await sumQueue.scheduleAt({ when: new Date(Date.now() + 15_000) }, { a: 1, b: 4 });
 ```
 
 Run later after a delay:
 
 ```
-await sumQueue.scheduleIn(30_000, { a: 3, b: 9 });
+await sumQueue.scheduleIn({ delayMs: 30_000 }, { a: 3, b: 9 });
 ```
 
 Repeat with results as a stream:
@@ -130,8 +130,8 @@ await sumQueue.publish(
     - `defineQueue({ name, inputSchema, outputSchema?, process, defaults?, hooks?, init? })`
     - `initQueues({ connection, runWorkers, prefix?, runWithContext?, allowLateRegistration?, exclusiveWorkers? })`
     - `publish(name, input, options?) → AwaitResult`
-    - `scheduleAt(name, when, input, options?) → AwaitResult`
-    - `scheduleIn(name, delayMs, input, options?) → AwaitResult`
+    - `scheduleAt(name, { when }, input, options?) → AwaitResult`
+    - `scheduleIn(name, { delayMs }, input, options?) → AwaitResult`
     - `scheduleRepeat(name, spec, input, options?) → RepeatStream`
     - `reconcileWorkers()`
     - `allowLateRegistration()`
