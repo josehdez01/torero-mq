@@ -8,6 +8,7 @@ Type-safe BullMQ queues you can tame — with Zod‑checked inputs/outputs, idem
 
 - Validates job inputs (and outputs) using Zod schemas
 - Provides a small, instance‑based service API (`QueueService`) with a required `prefix` used to namespace Redis keys
+- Returns a friendly, fully‑typed `ConcreteQueue` from `defineQueue` that you can import and use anywhere in your app
 - Supports idempotent publishes via `idempotencyKey`
 - Exposes scheduling (`scheduleAt`, `scheduleIn`) and repeatable jobs (`scheduleRepeat` as an async stream)
 - Helps avoid duplicate workers in a cluster with a small Redis lock
@@ -28,31 +29,80 @@ pnpm add bullmq ioredis zod torero-mq
 
 ## Quick Start
 
-Define a queue, initialize the service, and publish a job:
+The heart of this library is the `ConcreteQueue` you get back from `defineQueue`. Define once, import anywhere.
+
+1. Create a single service and an init helper:
 
 ```
-import { z } from 'zod';
-import { QueueService } from 'torero-mq';
+// queues/index.ts
 import IORedis from 'ioredis';
+import { QueueService } from 'torero-mq';
 
-const queues = new QueueService('myapp');
+export const queues = new QueueService('myapp');
 
-const sumQueue = queues.defineQueue({
+export async function initQueues() {
+  await queues.initQueues({
+    connection: new IORedis(process.env.REDIS_URL!),
+    runWorkers: true,
+  });
+}
+```
+
+2. Define and export a queue using that service:
+
+```
+// queues/sum-queue.ts
+import { z } from 'zod';
+import { queues } from './index';
+
+export const sumQueue = queues.defineQueue({
   name: 'sum',
   inputSchema: z.object({ a: z.number(), b: z.number() }),
-  outputSchema: z.number(),
+  outputSchema: z.object({ sum: z.number() }),
   async process(input) {
-    return input.a + input.b;
+    return { sum: input.a + input.b };
   },
 });
+```
 
-await queues.initQueues({
-  connection: new IORedis(process.env.REDIS_URL!),
-  runWorkers: true,
-});
+3. Use the `ConcreteQueue` anywhere in your app:
 
-const { awaitResult } = await sumQueue.publish({ a: 2, b: 3 });
-console.log(await awaitResult()); // 5
+```
+// api/route.ts
+import { sumQueue } from '../queues/sum-queue';
+
+export async function POST(req) {
+  const { a, b } = await req.json();
+  const { jobId, awaitResult } = await sumQueue.publish({ a, b });
+  const result = await awaitResult(); // fully typed: { sum: number }
+  return Response.json({ jobId, result });
+}
+```
+
+## ConcreteQueue: The Instance You Use
+
+`defineQueue` returns a `ConcreteQueue` with a small set of ergonomic methods:
+
+- `name` → the queue name
+- `publish(input, options?) → Promise<AwaitResult<T>>`
+- `scheduleAt({ when }, input, options?) → Promise<AwaitResult<T>>`
+- `scheduleIn({ delayMs }, input, options?) → Promise<AwaitResult<T>>`
+- `scheduleRepeat(spec, input, options?) → RepeatStream<T>`
+
+The `AwaitResult<T>` you get back from `publish/schedule*` is:
+
+- `{ jobId: string, awaitResult(options?), cancel() }`
+    - `awaitResult({ timeoutMs? })` waits for completion and returns the typed result
+    - `cancel()` attempts to remove the job before it runs
+
+Repeat jobs stream each run’s result and can be canceled:
+
+```
+const stream = sumQueue.scheduleRepeat({ everyMs: 5_000 }, { a: 2, b: 2 });
+for await (const { jobId, result } of stream) {
+  console.log('repeat', jobId, result);
+  if (shouldStop()) await stream.cancel();
+}
 ```
 
 ## Context Propagation (runWithContext)
@@ -117,6 +167,13 @@ await sumQueue.publish(
 - Other useful options (mapped to BullMQ JobsOptions via `toBullOptions`):
     - `retries`, `backoff`, `timeoutMs`, `priority`, `removeOnComplete`, `removeOnFail`
 
+## Common Usage Patterns
+
+- HTTP endpoints: enqueue and await the result in the same request for quick tasks; or return `jobId` and poll elsewhere for longer work.
+- Cron-style workers: `scheduleRepeat({ cron: '*/5 * * * *' }, payload)` and iterate the stream to act on each run.
+- Fire-and-forget: call `sumQueue.publish(payload)` and ignore the returned handle if you don’t need results.
+- Strong types: both `input` and `result` are inferred from your Zod schemas.
+
 ## Worker Management
 
 - `runWorkers: true` makes the service spawn in‑process workers.
@@ -127,25 +184,60 @@ await sumQueue.publish(
 ## API Summary
 
 - `class QueueService(prefix: string, logger?: Logger)`
-    - `defineQueue({ name, inputSchema, outputSchema?, process, defaults?, hooks?, init? })`
+    - `defineQueue({ name, inputSchema, outputSchema?, process, defaults?, hooks?, init? }) → ConcreteQueue`
     - `initQueues({ connection, runWorkers, prefix?, runWithContext?, allowLateRegistration?, exclusiveWorkers? })`
-    - `publish(name, input, options?) → AwaitResult`
-    - `scheduleAt(name, { when }, input, options?) → AwaitResult`
-    - `scheduleIn(name, { delayMs }, input, options?) → AwaitResult`
-    - `scheduleRepeat(name, spec, input, options?) → RepeatStream`
+    - `getQueue<Name extends keyof ToreroQueues>(name: Name) → ConcreteQueue<QueueInput<Name>, QueueOutput<Name>>`
+    - `materialize(name, { runWorkers? })`
     - `reconcileWorkers()`
     - `allowLateRegistration()`
-    - `materialize(name, { runWorkers? })`
     - `shutdown()`
+
+- `interface ConcreteQueue<TInput, TOutput>`
+    - `name: string`
+    - `publish(input, options?) → Promise<AwaitResult<TOutput>>`
+    - `scheduleAt({ when }, input, options?) → Promise<AwaitResult<TOutput>>`
+    - `scheduleIn({ delayMs }, input, options?) → Promise<AwaitResult<TOutput>>`
+    - `scheduleRepeat(spec, input, options?) → RepeatStream<TOutput>`
 
 Key types:
 
-- `PublishOptions<T>` → attempts, backoff, timeoutMs, priority, idempotencyKey, removeOnComplete/Fail
+- `PublishOptions<T>` → attempts, backoff, timeoutMs, priority, idempotencyKey, removeOnComplete/Fail, jobId
 - `QueueDefaults` → per‑queue defaults for the above (plus concurrency and optional limiter)
 - `RepeatSpec` → `{ everyMs?: number; cron?: string }`
 - `RepeatStream<T>` → async iterable; call `cancel()` to unschedule; `close()` to stop listening
 - `AwaitResult<T>` → `{ jobId, awaitResult, cancel }`
 - `Logger` → `{ info, warn, error }`
+
+## Typed getQueue (optional)
+
+Note: we generally discourage `getQueue`. The preferred pattern is to export your `ConcreteQueue` handles and import them where needed. Using `getQueue` requires extra typing work (module augmentation) and often signals an architectural smell (e.g., excessive dynamic routing). Keep it for rare edge cases only.
+
+If you still need dynamic access (e.g., by name in a registry), you can keep strong types by augmenting the library’s registry interface:
+
+```
+// global.d.ts (or any .d.ts included by tsconfig)
+import type { z } from 'zod';
+
+// Reuse the schemas/types you defined alongside the queue
+import type { sumInputSchema, sumOutputSchema } from './queues/sum-queue';
+
+declare module 'torero-mq' {
+  interface ToreroQueues {
+    sum: {
+      input: z.infer<typeof sumInputSchema>;
+      output: z.infer<typeof sumOutputSchema>;
+    };
+  }
+}
+```
+
+Then `getQueue('sum')` is fully typed:
+
+```
+import { queues } from './queues';
+const q = queues.getQueue('sum');
+// q is ConcreteQueue<{ a: number; b: number }, { sum: number }>
+```
 
 ## Development
 

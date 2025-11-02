@@ -11,5 +11,8 @@ export type {
     RepeatStream,
     InferInput,
     InferOutput,
+    ToreroQueues,
+    QueueInput,
+    QueueOutput,
 } from './core/types.js';
 export { toBullOptions, deriveJobId } from './helpers.js';

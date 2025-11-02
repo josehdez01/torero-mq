@@ -36,7 +36,7 @@ export type AwaitResult<T> = {
 };
 
 /** Repeat interval specification. One of `everyMs` or `cron` must be set. */
-export type RepeatSpec = { everyMs?: number; cron?: string };
+export type RepeatSpec = { type: 'interval'; everyMs: number } | { type: 'cron'; cron: string };
 
 /** Yielded values from a repeat stream: per-job result with its id. */
 export type RepeatYield<T> = { jobId: string; result: T };
@@ -45,7 +45,7 @@ export type RepeatYield<T> = { jobId: string; result: T };
  * Async iterable that yields results for each run of a repeatable job.
  * Call `cancel()` to stop scheduling future runs, or `close()` to stop listening.
  */
-export interface RepeatStream<T> extends AsyncIterable<RepeatYield<T>> {
+export interface RepeatStream<T> extends AsyncIterable<RepeatYield<T> | undefined> {
     cancel(): Promise<void>;
     close(): void;
 }
@@ -112,3 +112,27 @@ export type InferInput<T extends z.ZodType> = z.infer<T>;
 export type InferOutput<T extends z.ZodType | undefined> = T extends z.ZodType
     ? z.infer<Exclude<T, undefined>>
     : unknown;
+
+/**
+ * Global registry for strongly-typed dynamic access via QueueService.getQueue().
+ * Apps can augment this interface in a .d.ts file to describe their queues:
+ *
+ * declare module 'torero-mq' {
+ *   interface ToreroQueues {
+ *     sum: { input: { a: number; b: number }; output: { sum: number } };
+ *   }
+ * }
+ */
+export interface ToreroQueues {}
+
+/** Helper types for getQueue() to extract mapped input/output types. */
+export type QueueInput<Name extends keyof ToreroQueues> = ToreroQueues[Name] extends {
+    input: infer I;
+}
+    ? I
+    : never;
+export type QueueOutput<Name extends keyof ToreroQueues> = ToreroQueues[Name] extends {
+    output: infer O;
+}
+    ? O
+    : never;
