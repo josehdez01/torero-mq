@@ -49,5 +49,13 @@
     "typescript": "5.9.3",
     "vitest": "4.0.6"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/josehdez01/torero-mq.git"
+  },
+  "bugs": {
+    "url": "https://github.com/josehdez01/torero-mq/issues"
+  },
+  "homepage": "https://github.com/josehdez01/torero-mq#readme"
 }
