@@ -19,13 +19,9 @@ const DEFAULT_AWAIT_TIMEOUT_FALLBACK_MS = 60_000;
 
 type RegistryValue = QueueDefinition<unknown, unknown> & { __brand?: 'QueueDefinition' };
 
-/** Options for initializing a QueueService instance. */
-export type QueueServiceOpts = {
+/** Options for initializing queues at runtime. */
+export type InitQueuesOptions = {
     connection: IORedisClient;
-    runWorkers: boolean;
-    runWithContext?: <T>(fn: () => Promise<T>) => Promise<T>;
-    allowLateRegistration?: boolean;
-    exclusiveWorkers?: boolean;
 };
 
 const internalsSymbol = Symbol();
@@ -68,9 +64,20 @@ export class QueueService {
     private exclusiveWorkers = true;
     private runWorkers = false;
 
-    constructor(prefix: string, logger?: Logger) {
-        this.prefix = prefix;
-        this.logger = logger ?? { info: () => {}, warn: () => {}, error: () => {} };
+    constructor(options: {
+        prefix: string;
+        logger?: Logger;
+        runWorkers?: boolean;
+        allowLateRegistration?: boolean;
+        exclusiveWorkers?: boolean;
+        runWithContext?: <T>(fn: () => Promise<T>) => Promise<T>;
+    }) {
+        this.prefix = options.prefix;
+        this.logger = options.logger ?? { info: () => {}, warn: () => {}, error: () => {} };
+        this.runWorkers = options.runWorkers ?? false;
+        this._allowLateRegistration = options.allowLateRegistration ?? false;
+        this.exclusiveWorkers = options.exclusiveWorkers ?? true;
+        this.runWithContext = options.runWithContext;
     }
 
     /**
@@ -160,17 +167,13 @@ export class QueueService {
     }
 
     /** Initialize connections and materialize already-registered queues. */
-    async initQueues(options: QueueServiceOpts): Promise<void> {
+    async initQueues(options: InitQueuesOptions): Promise<void> {
         if (this.initialized) return;
 
         this.connection = options.connection;
-        this.runWithContext = options.runWithContext;
-        this._allowLateRegistration = options.allowLateRegistration ?? false;
-        this.exclusiveWorkers = options.exclusiveWorkers ?? true;
-        this.runWorkers = options.runWorkers;
 
         for (const definition of this[internalsSymbol].registry.values()) {
-            await this.materialize(definition.name, { runWorkers: options.runWorkers });
+            await this.materialize(definition.name, { runWorkers: this.runWorkers });
         }
         this.initialized = true;
     }
@@ -257,7 +260,6 @@ function getRuntimeOrThrow<TInput, TOutput>(
 ): BullmqRuntime<TInput, TOutput> {
     const { getRuntime } = service[internalsSymbol];
     const runtime = getRuntime<TInput, TOutput>(name);
-    if (!runtime) throw new Error(`Queue '${name}' not registered`);
     return runtime;
 }
 
@@ -291,7 +293,11 @@ async function enqueueNow<TInput, TOutput>(
     const jobOptions = jobId ? { ...baseOptions, jobId } : baseOptions;
     const job = await runtime.queue.add('job', data, jobOptions);
     const awaitResult = async ({ timeoutMs }: { timeoutMs?: number } = {}): Promise<TOutput> => {
-        const timeout = timeoutMs ?? options?.timeoutMs ?? definition.defaults?.timeoutMs ?? 60_000;
+        const timeout =
+            timeoutMs ??
+            options?.timeoutMs ??
+            definition.defaults?.timeoutMs ??
+            DEFAULT_AWAIT_TIMEOUT_FALLBACK_MS;
         return (await job.waitUntilFinished(runtime.events, timeout)) as TOutput;
     };
     const cancel = async () => {
@@ -423,24 +429,16 @@ function enqueueRepeat<TInput, TOutput>(
     runtime.events.on('completed', onCompleted);
     listeners.push(onCompleted);
 
-    const asyncIterator: AsyncIterator<{ jobId: string; result: TOutput } | undefined> = {
+    const asyncIterator: AsyncIterator<{ jobId: string; result: TOutput }, void> = {
         next: async () => {
-            if (closed)
-                return {
-                    done: true,
-                    value: undefined,
-                };
+            if (closed) return { done: true, value: undefined };
             if (pending.length > 0) {
                 return { done: false, value: pending.shift()! };
             }
             await new Promise<void>((res) => {
                 resolveNotify = res;
             });
-            if (closed)
-                return {
-                    done: true,
-                    value: undefined,
-                };
+            if (closed) return { done: true, value: undefined };
             return { done: false, value: pending.shift()! };
         },
     };

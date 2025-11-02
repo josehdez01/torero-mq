@@ -4,7 +4,7 @@ import { QueueService } from './index.js';
 
 describe('public API', () => {
     it('QueueService.defineQueue registers queues', () => {
-        const queueService = new QueueService('test');
+        const queueService = new QueueService({ prefix: 'test' });
 
         const q = queueService.defineQueue({
             name: 'test-q',
@@ -17,7 +17,7 @@ describe('public API', () => {
     });
 
     it('QueueService does not expose enqueue methods; ConcreteQueue does', () => {
-        const queueService = new QueueService('test');
+        const queueService = new QueueService({ prefix: 'test' });
         queueService.defineQueue({
             name: 'nq',
             inputSchema: z.object({ n: z.number() }),

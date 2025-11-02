@@ -35,7 +35,10 @@ export type AwaitResult<T> = {
     cancel: () => Promise<void>;
 };
 
-/** Repeat interval specification. One of `everyMs` or `cron` must be set. */
+/**
+ * Repeat interval specification. Discriminated union with either a fixed interval
+ * or a cron expression.
+ */
 export type RepeatSpec = { type: 'interval'; everyMs: number } | { type: 'cron'; cron: string };
 
 /** Yielded values from a repeat stream: per-job result with its id. */
@@ -45,7 +48,7 @@ export type RepeatYield<T> = { jobId: string; result: T };
  * Async iterable that yields results for each run of a repeatable job.
  * Call `cancel()` to stop scheduling future runs, or `close()` to stop listening.
  */
-export interface RepeatStream<T> extends AsyncIterable<RepeatYield<T> | undefined> {
+export interface RepeatStream<T> extends AsyncIterable<RepeatYield<T>> {
     cancel(): Promise<void>;
     close(): void;
 }

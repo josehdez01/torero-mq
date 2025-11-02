@@ -38,12 +38,15 @@ The heart of this library is the `ConcreteQueue` you get back from `defineQueue`
 import IORedis from 'ioredis';
 import { QueueService } from 'torero-mq';
 
-export const queues = new QueueService('myapp');
+export const queues = new QueueService({
+  prefix: 'myapp',
+  runWorkers: true,        // spawn in-process workers
+  exclusiveWorkers: true,  // single worker per queue across cluster (default)
+});
 
 export async function initQueues() {
   await queues.initQueues({
     connection: new IORedis(process.env.REDIS_URL!),
-    runWorkers: true,
   });
 }
 ```
@@ -98,7 +101,7 @@ The `AwaitResult<T>` you get back from `publish/schedule*` is:
 Repeat jobs stream each run’s result and can be canceled:
 
 ```
-const stream = sumQueue.scheduleRepeat({ everyMs: 5_000 }, { a: 2, b: 2 });
+const stream = sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
 for await (const { jobId, result } of stream) {
   console.log('repeat', jobId, result);
   if (shouldStop()) await stream.cancel();
@@ -114,10 +117,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 const als = new AsyncLocalStorage<Map<string, string>>();
 
-await queues.initQueues({
-  connection: new IORedis(process.env.REDIS_URL!),
+const queues = new QueueService({
+  prefix: 'myapp',
   runWorkers: true,
   runWithContext: (fn) => als.run(new Map([['requestId', 'abc-123']]), fn),
+});
+
+await queues.initQueues({
+  connection: new IORedis(process.env.REDIS_URL!),
 });
 
 // Inside your queue `process` function you can read it with als.getStore()
@@ -140,7 +147,7 @@ await sumQueue.scheduleIn({ delayMs: 30_000 }, { a: 3, b: 9 });
 Repeat with results as a stream:
 
 ```
-const stream = sumQueue.scheduleRepeat({ everyMs: 5_000 }, { a: 2, b: 2 });
+const stream = sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
 
 (async () => {
   for await (const { jobId, result } of stream) {
@@ -170,22 +177,22 @@ await sumQueue.publish(
 ## Common Usage Patterns
 
 - HTTP endpoints: enqueue and await the result in the same request for quick tasks; or return `jobId` and poll elsewhere for longer work.
-- Cron-style workers: `scheduleRepeat({ cron: '*/5 * * * *' }, payload)` and iterate the stream to act on each run.
+- Cron-style workers: `scheduleRepeat({ type: 'cron', cron: '*/5 * * * *' }, payload)` and iterate the stream to act on each run.
 - Fire-and-forget: call `sumQueue.publish(payload)` and ignore the returned handle if you don’t need results.
 - Strong types: both `input` and `result` are inferred from your Zod schemas.
 
 ## Worker Management
 
-- `runWorkers: true` makes the service spawn in‑process workers.
+- Set `runWorkers: true` in the constructor to spawn in‑process workers.
 - `exclusiveWorkers` (default: true) acquires a lightweight Redis lock so only one worker runs per queue across your cluster.
 - If you enable late registration via `allowLateRegistration()`, the service can materialize new queues after init.
 - Call `reconcileWorkers()` to attempt to spawn workers for runtimes that are missing one (useful if a lock was released and you want to race for it again).
 
 ## API Summary
 
-- `class QueueService(prefix: string, logger?: Logger)`
+- `class QueueService({ prefix, logger?, runWorkers?, allowLateRegistration?, exclusiveWorkers?, runWithContext? })`
     - `defineQueue({ name, inputSchema, outputSchema?, process, defaults?, hooks?, init? }) → ConcreteQueue`
-    - `initQueues({ connection, runWorkers, prefix?, runWithContext?, allowLateRegistration?, exclusiveWorkers? })`
+    - `initQueues({ connection })`
     - `getQueue<Name extends keyof ToreroQueues>(name: Name) → ConcreteQueue<QueueInput<Name>, QueueOutput<Name>>`
     - `materialize(name, { runWorkers? })`
     - `reconcileWorkers()`
@@ -203,10 +210,27 @@ Key types:
 
 - `PublishOptions<T>` → attempts, backoff, timeoutMs, priority, idempotencyKey, removeOnComplete/Fail, jobId
 - `QueueDefaults` → per‑queue defaults for the above (plus concurrency and optional limiter)
-- `RepeatSpec` → `{ everyMs?: number; cron?: string }`
-- `RepeatStream<T>` → async iterable; call `cancel()` to unschedule; `close()` to stop listening
+- `RepeatSpec` → `{ type: 'interval'; everyMs: number } | { type: 'cron'; cron: string }`
+- `RepeatStream<T>` → async iterable of `{ jobId, result }`; call `cancel()` to unschedule; `close()` to stop listening.
 - `AwaitResult<T>` → `{ jobId, awaitResult, cancel }`
 - `Logger` → `{ info, warn, error }`
+
+## QueueService Options
+
+- `prefix` (required)
+    - Namespaces all Redis keys for queues, events, and locks.
+    - Choose a short, app-specific string (e.g., `myapp`).
+- `logger` (default: no-op logger)
+    - Object with `info`, `warn`, `error` functions. Used by workers, events, and internals.
+- `runWorkers` (default: false)
+    - When true, spawns in-process workers for all registered queues on this instance.
+- `exclusiveWorkers` (default: true)
+    - Ensures only one worker per queue across your cluster via a small Redis lock.
+- `allowLateRegistration` (default: false)
+    - Allows calling `defineQueue()` after `initQueues()`. Late definitions are materialized automatically using the current worker settings.
+- `runWithContext` (default: undefined)
+    - Function wrapper for job execution; useful for AsyncLocalStorage, tracing, or scoping per-job context.
+    - Signature: `(fn) => PromiseLike` — called around each job’s `process`.
 
 ## Typed getQueue (optional)
 

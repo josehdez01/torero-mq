@@ -8,9 +8,9 @@ import { QueueService } from '../src/index.js';
 //   - sumQueue.scheduleIn({ delayMs }, input)
 //   - sumQueue.scheduleRepeat(spec, input)
 // Note: ensure the QueueService that registered this queue is initialized once
-// in your app (e.g. at startup) via `queueService.initQueues({ connection, runWorkers })`.
+// in your app (e.g. at startup) via `queueService.initQueues({ connection })`.
 // You can either export `queueService` from here or centralize it in a `queues/` index.
-const queueService = new QueueService('queues');
+const queueService = new QueueService({ prefix: 'queues', runWorkers: true });
 
 // Export schemas to enable typed getQueue() via module augmentation
 export const sumInputSchema = z.object({ a: z.number(), b: z.number() });
@@ -54,7 +54,7 @@ export const sumQueue = queueService.defineQueue({
  * await sumQueue.scheduleIn({ delayMs: 30_000 }, { a: 3, b: 3 });
  *
  * // 5) Repeat and iterate results
- * const stream = sumQueue.scheduleRepeat({ everyMs: 5_000 }, { a: 2, b: 2 });
+ * const stream = sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
  * for await (const { jobId, result } of stream) {
  *   console.log('repeat', jobId, result);
  *   if (shouldStop()) await stream.cancel();
