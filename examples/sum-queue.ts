@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { defineQueue } from './factory.ts';
+import { QueueService } from '../src/index.js';
 
-export const sumQueue = defineQueue({
+const queueService = new QueueService('queues');
+export const sumQueue = queueService.defineQueue({
     name: 'sum',
     inputSchema: z.object({ a: z.number(), b: z.number() }),
     outputSchema: z.object({ sum: z.number() }),
@@ -17,4 +18,3 @@ export const sumQueue = defineQueue({
         concurrency: 5,
     },
 });
-
