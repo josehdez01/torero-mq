@@ -211,8 +211,8 @@ Key types:
 - `PublishOptions<T>` → attempts, backoff, timeoutMs, priority, idempotencyKey, removeOnComplete/Fail, jobId
 - `QueueDefaults` → per‑queue defaults for the above (plus concurrency and optional limiter)
 - `RepeatSpec` →
-  - Interval: `{ type: 'interval'; everyMs: number; startDate?: Date; endDate?: Date; limit?: number }`
-  - Cron: `{ type: 'cron'; cron: string; startDate?: Date; endDate?: Date; limit?: number }`
+    - Interval: `{ type: 'interval'; everyMs: number; startDate?: Date; endDate?: Date; limit?: number }`
+    - Cron: `{ type: 'cron'; cron: string; startDate?: Date; endDate?: Date; limit?: number }`
 - `RepeatStream<T>` → async iterable of `{ jobId, result }`; call `cancel()` to unschedule; `close()` to stop listening.
 - `AwaitResult<T>` → `{ jobId, awaitResult, cancel }`
 
