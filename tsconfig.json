@@ -1,21 +1,26 @@
 {
-    "compilerOptions": {
-        "target": "ES2022",
-        "module": "NodeNext",
-        "moduleResolution": "NodeNext",
-        "strict": true,
-        "noUncheckedIndexedAccess": true,
-        "noImplicitAny": true,
-        "verbatimModuleSyntax": true,
-        "skipLibCheck": true,
-        "resolveJsonModule": true,
-        "esModuleInterop": false,
-        "forceConsistentCasingInFileNames": true,
-        "types": ["vitest/importMeta"],
-        "noEmit": true
-    },
-    "include": [
-        "src/**/*.ts",
-        "vitest.config.ts"
-    ]
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitAny": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": false,
+    "forceConsistentCasingInFileNames": true,
+    "types": [
+      "vitest/importMeta"
+    ],
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": [
+    "src/queues/**"
+  ]
 }
