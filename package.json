@@ -1,6 +1,6 @@
 {
     "name": "torero-mq",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "description": "Type-safe BullMQ queues you can tame.",
     "type": "module",
     "private": false,
@@ -14,6 +14,7 @@
     "exports": {
         ".": {
             "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
             "default": "./dist/index.js"
         }
     },
@@ -28,7 +29,7 @@
         "lint": "oxlint",
         "format": "prettier -w .",
         "format:check": "prettier -c .",
-        "prepublishOnly": "pnpm run build"
+        "prepublishOnly": "npm run build"
     },
     "keywords": [
         "bullmq",
@@ -39,9 +40,9 @@
         "zod"
     ],
     "peerDependencies": {
-        "bullmq": "5.63.0",
-        "ioredis": "5.8.2",
-        "zod": "4.1.12"
+        "bullmq": "^5.63.0",
+        "ioredis": "^5.8.2",
+        "zod": "^4.1.12"
     },
     "devDependencies": {
         "@vitest/coverage-v8": "4.0.6",
@@ -57,7 +58,7 @@
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+ssh://git@github.com/josehdez01/torero-mq.git"
+        "url": "git+https://github.com/josehdez01/torero-mq.git"
     },
     "bugs": {
         "url": "https://github.com/josehdez01/torero-mq/issues"
