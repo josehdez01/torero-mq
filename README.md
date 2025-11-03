@@ -199,6 +199,15 @@ await sumQueue.publish(
     - `allowLateRegistration()`
     - `shutdown()`
 
+## Releases
+
+- We use Changesets for batched releases.
+- For any PR that changes behavior, add a changeset:
+    - Run: `pnpm dlx changeset`
+    - Choose patch/minor/major and write a short note.
+- After PRs merge to `main`, a bot opens/updates a "Version Packages" PR.
+- Merge that PR to publish to npm and create the GitHub Release.
+
 - `interface ConcreteQueue<TInput, TOutput>`
     - `name: string`
     - `publish(input, options?) → Promise<AwaitResult<TOutput>>`
