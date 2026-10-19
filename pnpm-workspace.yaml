@@ -1,0 +1,4 @@
+minimumReleaseAgeExclude:
+    - bullmq@6.3.17
+allowBuilds:
+    msgpackr-extract: true

@@ -1,6 +1,6 @@
 {
     "compilerOptions": {
-        "target": "ES2022",
+        "target": "ESNext",
         "module": "NodeNext",
         "moduleResolution": "NodeNext",
         "strict": true,
@@ -9,11 +9,10 @@
         "verbatimModuleSyntax": true,
         "skipLibCheck": true,
         "resolveJsonModule": true,
-        "esModuleInterop": false,
         "forceConsistentCasingInFileNames": true,
         "types": ["vitest/importMeta", "node"],
         "noEmit": true
     },
-    "include": ["src/**/*.ts", "vitest.config.ts"],
-    "exclude": []
+    "include": ["src/**/*.ts", "tests/**/*.test.ts", "vitest.config.ts"],
+    "exclude": ["tests/**/*.test-d.ts"]
 }

@@ -1,294 +1,130 @@
 # torero-mq
 
-Type-safe BullMQ queues you can tame — with Zod‑checked inputs/outputs, idempotent enqueues, repeatable jobs, and an ergonomic instance API.
+Typed job contracts, producers and workers for BullMQ. Define jobs once, share contracts with producers, and attach handlers in your worker process. Nested routers preserve input and result types without module augmentation.
 
-## What Is This?
+Version 0.2 replaces the 0.1 API and wire format. Read [the migration guide](docs/migration.md) before switching an existing deployment.
 
-`torero-mq` is a thin, type‑safe layer over BullMQ that:
+## Install
 
-- Validates job inputs (and outputs) using Zod schemas
-- Provides a small, instance‑based service API (`QueueService`) with a required `prefix` used to namespace Redis keys
-- Returns a friendly, fully‑typed `ConcreteQueue` from `defineQueue` that you can import and use anywhere in your app
-- Supports idempotent publishes via `idempotencyKey`
-- Exposes scheduling (`scheduleAt`, `scheduleIn`) and repeatable jobs (`scheduleRepeat` as an async stream)
-- Helps avoid duplicate workers in a cluster with a small Redis lock
+Requires Node.js **26 or newer**, BullMQ **6**, and Redis. The default Redis driver is ioredis **6**. Schemas use [Standard Schema](https://standardschema.dev/); Zod is an example, not a Torero dependency.
 
-You bring Redis, BullMQ, and Zod. We make it easy to define queues with types that flow end‑to‑end.
-
-## Requirements
-
-- Node.js: ^18.17, ^20, or >= 22
-- Redis: a reachable Redis instance
-- Peer dependencies (install in your app): `bullmq`, `ioredis`, `zod`
-
-Install peers and the library:
-
-```
-pnpm add bullmq ioredis zod torero-mq
+```sh
+pnpm add torero-mq bullmq@^6.3.17 ioredis@^6.0.0 zod
 ```
 
-## Quick Start
+## Define, publish, process
 
-The heart of this library is the `ConcreteQueue` you get back from `defineQueue`. Define once, import anywhere.
-
-1. Create a single service and an init helper:
-
-```
-// queues/index.ts
-import IORedis from 'ioredis';
-import { QueueService } from 'torero-mq';
-
-export const queues = new QueueService({
-  prefix: 'myapp',
-  runWorkers: true,        // spawn in-process workers
-  exclusiveWorkers: true,  // single worker per queue across cluster (default)
-});
-
-export async function initQueues() {
-  await queues.initQueues({
-    connection: new IORedis(process.env.REDIS_URL!),
-  });
-}
-```
-
-2. Define and export a queue using that service:
-
-```
-// queues/sum-queue.ts
+```ts
 import { z } from 'zod';
-import { queues } from './index';
+import { job, createQueueClient, createWorkers } from 'torero-mq';
 
-export const sumQueue = queues.defineQueue({
-  name: 'sum',
-  inputSchema: z.object({ a: z.number(), b: z.number() }),
-  outputSchema: z.object({ sum: z.number() }),
-  async process(input) {
-    return { sum: input.a + input.b };
-  },
-});
-```
+const sum = job('math.sum', { version: 1 })
+    .input(z.object({ a: z.number(), b: z.number() }))
+    .output(z.object({ total: z.number() }))
+    .options({ attempts: 3, backoff: { type: 'exponential', delay: 500 } });
 
-3. Use the `ConcreteQueue` anywhere in your app:
-
-```
-// api/route.ts
-import { sumQueue } from '../queues/sum-queue';
-
-export async function POST(req) {
-  const { a, b } = await req.json();
-  const { jobId, awaitResult } = await sumQueue.publish({ a, b });
-  const result = await awaitResult(); // fully typed: { sum: number }
-  return Response.json({ jobId, result });
-}
-```
-
-## ConcreteQueue: The Instance You Use
-
-`defineQueue` returns a `ConcreteQueue` with a small set of ergonomic methods:
-
-- `name` → the queue name
-- `publish(input, options?) → Promise<AwaitResult<T>>`
-- `scheduleAt({ when }, input, options?) → Promise<AwaitResult<T>>`
-- `scheduleIn({ delayMs }, input, options?) → Promise<AwaitResult<T>>`
-- `scheduleRepeat(spec, input, options?) → Promise<RepeatStream<T>>`
-
-The `AwaitResult<T>` you get back from `publish/schedule*` is:
-
-- `{ jobId: string, awaitResult(options?), cancel() }`
-    - `awaitResult({ timeoutMs? })` waits for completion and returns the typed result
-    - `cancel()` attempts to remove the job before it runs
-
-Repeat jobs stream each run’s result and can be canceled:
-
-```
-const stream = await sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
-for await (const { jobId, result } of stream) {
-  console.log('repeat', jobId, result);
-  if (shouldStop()) await stream.cancel();
-}
-```
-
-## Context Propagation (runWithContext)
-
-Wrap job processing in your own context function — useful for AsyncLocalStorage, tracing, etc.
-
-```
-import { AsyncLocalStorage } from 'node:async_hooks';
-
-const als = new AsyncLocalStorage<Map<string, string>>();
-
-const queues = new QueueService({
-  prefix: 'myapp',
-  runWorkers: true,
-  runWithContext: (fn) => als.run(new Map([['requestId', 'abc-123']]), fn),
-});
-
-await queues.initQueues({
-  connection: new IORedis(process.env.REDIS_URL!),
-});
-
-// Inside your queue `process` function you can read it with als.getStore()
-```
-
-## Scheduling and Repeats
-
-Run later at an absolute time:
-
-```
-await sumQueue.scheduleAt({ when: new Date(Date.now() + 15_000) }, { a: 1, b: 4 });
-```
-
-Run later after a delay:
-
-```
-await sumQueue.scheduleIn({ delayMs: 30_000 }, { a: 3, b: 9 });
-```
-
-Repeat with results as a stream:
-
-```
-const stream = await sumQueue.scheduleRepeat({ type: 'interval', everyMs: 5_000 }, { a: 2, b: 2 });
-
-(async () => {
-  for await (const { jobId, result } of stream) {
-    console.log('repeat result', jobId, result);
-    if (/* some condition */ false) {
-      await stream.cancel();
-      break;
-    }
-  }
-})();
-```
-
-## Idempotency and Options
-
-- Use `idempotencyKey` to dedupe enqueue calls:
-
-```
-await sumQueue.publish(
-  { a: 1, b: 2 },
-  { idempotencyKey: ({ a, b }) => `${a}:${b}` }
+const settings = {
+    connection: { url: process.env.REDIS_URL ?? 'redis://127.0.0.1:6379' },
+    prefix: 'my-app',
+};
+const client = createQueueClient({ math: { sum } }, settings);
+const workers = createWorkers(
+    {
+        math: {
+            sum: sum.handler(({ input }) => ({ total: input.a + input.b })),
+        },
+    },
+    settings,
 );
-```
 
-- Other useful options (mapped to BullMQ JobsOptions via `toBullOptions`):
-    - `retries`, `backoff`, `timeoutMs`, `priority`, `removeOnComplete`, `removeOnFail`
-
-## Common Usage Patterns
-
-- HTTP endpoints: enqueue and await the result in the same request for quick tasks; or return `jobId` and poll elsewhere for longer work.
-- Cron-style workers: `await scheduleRepeat({ type: 'cron', cron: '*/5 * * * *' }, payload)` and iterate the stream to act on each run.
-- Fire-and-forget: call `sumQueue.publish(payload)` and ignore the returned handle if you don’t need results.
-- Strong types: both `input` and `result` are inferred from your Zod schemas.
-
-## Worker Management
-
-- Set `runWorkers: true` in the constructor to spawn in‑process workers.
-- `exclusiveWorkers` (default: true) acquires a lightweight Redis lock so only one worker runs per queue across your cluster.
-- If you enable late registration via `allowLateRegistration()`, the service can materialize new queues after init.
-- Call `reconcileWorkers()` to attempt to spawn workers for runtimes that are missing one (useful if a lock was released and you want to race for it again).
-
-## API Summary
-
-- `class QueueService({ prefix, logger?, runWorkers?, allowLateRegistration?, exclusiveWorkers?, runWithContext? })`
-    - `defineQueue({ name, inputSchema, outputSchema?, process, defaults?, hooks?, init? }) → ConcreteQueue`
-    - `initQueues({ connection })`
-    - `getQueue<Name extends keyof ToreroQueues>(name: Name) → ConcreteQueue<QueueInput<Name>, QueueOutput<Name>>`
-    - `materialize(name, { runWorkers? })`
-    - `reconcileWorkers()`
-    - `allowLateRegistration()`
-    - `shutdown()`
-
-## Releases
-
-- We use Changesets for batched releases.
-- For any PR that changes behavior, add a changeset:
-    - Run: `pnpm dlx changeset`
-    - Choose patch/minor/major and write a short note.
-- After PRs merge to `main`, a bot opens/updates a "Version Packages" PR.
-- Merge that PR to publish to npm and create the GitHub Release.
-
-- `interface ConcreteQueue<TInput, TOutput>`
-    - `name: string`
-    - `publish(input, options?) → Promise<AwaitResult<TOutput>>`
-    - `scheduleAt({ when }, input, options?) → Promise<AwaitResult<TOutput>>`
-    - `scheduleIn({ delayMs }, input, options?) → Promise<AwaitResult<TOutput>>`
-    - `scheduleRepeat(spec, input, options?) → Promise<RepeatStream<TOutput>>`
-
-Key types:
-
-- `PublishOptions<T>` → attempts, backoff, timeoutMs, priority, idempotencyKey, removeOnComplete/Fail, jobId
-- `QueueDefaults` → per‑queue defaults for the above (plus concurrency and optional limiter)
-- `RepeatSpec` →
-    - Interval: `{ type: 'interval'; everyMs: number; startDate?: Date; endDate?: Date; limit?: number }`
-    - Cron: `{ type: 'cron'; cron: string; startDate?: Date; endDate?: Date; limit?: number }`
-- `RepeatStream<T>` → async iterable of `{ jobId, result }`; call `cancel()` to unschedule; `close()` to stop listening.
-- `AwaitResult<T>` → `{ jobId, awaitResult, cancel }`
-
-## Repeat Scheduling (Job Scheduler)
-
-- Under the hood, repeat jobs use BullMQ’s Job Scheduler API: `upsertJobScheduler` and `removeJobScheduler`.
-- `scheduleRepeat(...)` returns a Promise and will reject if the scheduler upsert fails.
-- The first repetition for a newly inserted scheduler runs immediately; subsequent runs follow the schedule.
-- `cancel()` removes the job scheduler (stopping future runs) and closes the stream; `close()` only stops listening.
-- You can provide an `idempotencyKey` in options to derive a stable scheduler ID; otherwise a random ID is used.
-- Scheduler‑produced jobs get special IDs; custom `jobId` is not applied to these jobs (BullMQ constraint).
-- Supported repeat controls: `startDate`, `endDate`, `limit` on both interval and cron specs.
-- `Logger` → `{ info, warn, error }`
-
-## QueueService Options
-
-- `prefix` (required)
-    - Namespaces all Redis keys for queues, events, and locks.
-    - Choose a short, app-specific string (e.g., `myapp`).
-- `logger` (default: no-op logger)
-    - Object with `info`, `warn`, `error` functions. Used by workers, events, and internals.
-- `runWorkers` (default: false)
-    - When true, spawns in-process workers for all registered queues on this instance.
-- `exclusiveWorkers` (default: true)
-    - Ensures only one worker per queue across your cluster via a small Redis lock.
-- `allowLateRegistration` (default: false)
-    - Allows calling `defineQueue()` after `initQueues()`. Late definitions are materialized automatically using the current worker settings.
-- `runWithContext` (default: undefined)
-    - Function wrapper for job execution; useful for AsyncLocalStorage, tracing, or scoping per-job context.
-    - Signature: `(fn) => PromiseLike` — called around each job’s `process`.
-
-## Typed getQueue (optional)
-
-Note: we generally discourage `getQueue`. The preferred pattern is to export your `ConcreteQueue` handles and import them where needed. Using `getQueue` requires extra typing work (module augmentation) and often signals an architectural smell (e.g., excessive dynamic routing). Keep it for rare edge cases only.
-
-If you still need dynamic access (e.g., by name in a registry), you can keep strong types by augmenting the library’s registry interface:
-
-```
-// global.d.ts (or any .d.ts included by tsconfig)
-import type { z } from 'zod';
-
-// Reuse the schemas/types you defined alongside the queue
-import type { sumInputSchema, sumOutputSchema } from './queues/sum-queue';
-
-declare module 'torero-mq' {
-  interface ToreroQueues {
-    sum: {
-      input: z.infer<typeof sumInputSchema>;
-      output: z.infer<typeof sumOutputSchema>;
-    };
-  }
+try {
+    await workers.start();
+    const handle = await client.jobs.math.sum.publish({ a: 2, b: 3 });
+    const result = await handle.wait({ timeoutMs: 5_000 }); // { total: number }
+    console.log(handle.id, result.total);
+} finally {
+    await workers.close();
+    await client.close();
 }
 ```
 
-Then `getQueue('sum')` is fully typed:
+Definitions never connect to Redis. Producers start lazily on their first operation; `await client.start()` connects explicitly. Workers process only after `await workers.start()`. Producers and workers can run in separate processes using the same contract, prefix and Redis connection.
 
+Put shared contracts in a module importing `job` from `torero-mq/contract`. This entry point loads no BullMQ or Redis runtime. Keep handlers and infrastructure imports in worker modules. Job names are explicit and stable: moving `math.sum` inside a different router path does not rename its queue. Names must be unique within a router; contract versions identify compatible wire payloads.
+
+## Job controls
+
+```ts
+const queue = client.jobs.math.sum;
+const handle = queue.get('existing-id'); // synchronous typed reference
+await handle.status(); // BullMQ state, or 'unknown'
+await handle.result(); // saved result; throws if pending/failed/missing
+await handle.wait({ signal: AbortSignal.timeout(5_000) });
+await handle.retry(); // retry a failed job
+await handle.remove(); // 'removed' | 'missing' | 'active'
+
+await queue.publishBulk([
+    { input: { a: 1, b: 2 }, options: { jobId: 'invoice-123' } },
+    { input: { a: 3, b: 4 } },
+]);
+await queue.schedule({ a: 1, b: 2 }, { delayMs: 10_000 });
+await queue.schedule({ a: 1, b: 2 }, { at: new Date(Date.now() + 10_000) });
+await queue.counts();
+await queue.pause();
+await queue.resume();
+await queue.setGlobalConcurrency(2);
+await queue.removeGlobalConcurrency();
+const raw = await queue.raw(); // BullMQ administration; payloads are Torero envelopes
 ```
-import { queues } from './queues';
-const q = queues.getQueue('sum');
-// q is ConcreteQueue<{ a: number; b: number }, { sum: number }>
+
+Publish options include `jobId`, `delay`, native `deduplication`, `attempts`, `backoff`, `priority`, `lifo` and retention options. `attempts` includes the first run. Custom job IDs must be nonempty, contain no `:` and not consist entirely of digits. Bulk publishing does not transact with your application database.
+
+## Recurring jobs
+
+```ts
+const schedule = client.jobs.math.sum.schedules.get('daily-sum');
+const events = await schedule.subscribe({ capacity: 100 });
+await client.jobs.math.sum.schedules.upsert(
+    'daily-sum',
+    { cron: '0 9 * * *', timezone: 'America/Mexico_City' },
+    { a: 2, b: 3 },
+);
+try {
+    for await (const event of events) {
+        if (event.type === 'completed') console.log(event.result.total);
+        else console.error(event.error);
+        break;
+    }
+} finally {
+    events.close(); // stop this observer
+    await schedule.remove(); // stop future scheduled runs
+}
 ```
+
+Use `{ everyMs: 60_000 }` for intervals. Both schedule forms accept `startDate`, `endDate` and `limit`. `schedules.list()` returns public IDs and schedule metadata. Subscribe **before** upsert to observe an immediate first run. Subscriptions are live, future-only, best-effort streams; they are not a durable audit log. Their buffer is bounded and throws `StreamOverflowError` on overflow. Closing an iterator does not remove its scheduler.
+
+## Guarantees and boundaries
+
+- Inputs are encoded into an immutable snapshot before enqueue validation. Each worker attempt validates and transforms that original input; transforms do not accumulate across retries. Validators should be pure because they may run at enqueue and on each attempt. Async schemas are supported; output schemas validate and transform handler results.
+- The codec preserves `Date`, `bigint`, `undefined`, `Map`, `Set`, `RegExp`, special numbers and plain nested values. It rejects functions, symbols and custom class instances.
+- Completed jobs default to retention of 24 hours / 1,000 jobs; failed jobs to 7 days / 5,000 jobs. These are best-effort BullMQ limits with lazy eviction. Late waits and restarted clients can read retained results. `removeOnComplete: true` forfeits that ability.
+- Wait timeouts and abort signals affect only the waiter. Removing an active job returns `'active'` and does not stop its handler.
+- Worker `timeoutMs` aborts the handler signal, then waits for the handler to settle before releasing its lock and slot or retrying. A handler that ignores cancellation can keep running and hold graceful `close()` indefinitely. It is a cooperative deadline, not a hard process kill. Worker, wait and startup timeouts must be positive integer milliseconds no greater than 2,147,483,647.
+- BullMQ provides at-least-once execution. Use application idempotency, provider deduplication and a transactional outbox where needed.
+- `JobError(code, data)` is permanent by default; `{ retryable: true }` opts into retries. Failures surface as `JobFailedError` with persisted code/data in `details`. Promise rejection types are not inferred from contracts.
+- Plain connection options create owned connections. Supplied Redis clients remain caller-owned and are never quit by Torero; borrowed worker clients need `maxRetriesPerRequest: null`. Close every client, worker group and subscription you create.
+
+See [application patterns](docs/project-patterns.md), [migration](docs/migration.md), and the [runnable example](examples/sum-queue.ts).
 
 ## Development
 
-- Build: `pnpm run build`
-- Test: `pnpm test`
+```sh
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm test:integration # creates and removes its own Docker Redis
+pnpm test:coverage    # all unit + Redis tests, with combined coverage
+pnpm test:package     # builds, packs, installs, imports and typechecks a real consumer
+```
 
-## License
-
-MIT — see `LICENSE`.
+MIT.
